@@ -29,6 +29,15 @@ services:
         value: "900"
       - key: STEPUP_FRESHNESS_SECONDS
         value: "120"
+      # Only consulted when DEMO_MODE=okta. Left unset while running against
+      # the local mock authorization server (default). Set it (e.g.
+      # dev-12345.okta.com) to verify real Okta ID tokens during step-up.
+      - key: OKTA_DOMAIN
+        sync: false
+      # OIDC client id the agent presents to Okta and expects as the aud on
+      # step-up ID tokens. Overrides the built-in mock default.
+      - key: OKTA_AGENT_CLIENT_ID
+        sync: false
 
   # Express MCP server — resource server, verifies tokens against mock-as JWKS
   - type: web

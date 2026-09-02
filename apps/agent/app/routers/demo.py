@@ -70,9 +70,14 @@ async def restock(body: RestockRequest) -> dict[str, Any]:
             approval.approval_id,
             TraceEvent(
                 kind="note",
-                label="Shopper notified out of band",
-                detail="Approval is pending. The agent cannot proceed alone.",
-                claims={"channel": get_notifier().name, "ttl_seconds": settings.approval_ttl_seconds},
+                label="Notification sent",
+                detail=summary,
+                claims={
+                    "channel": get_notifier().name,
+                    "ttl_seconds": settings.approval_ttl_seconds,
+                    "resume_url": resume_url,
+                    "note": "This link names an approval — step-up still gates the order.",
+                },
             ),
         )
 
