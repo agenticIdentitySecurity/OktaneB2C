@@ -12,6 +12,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from . import mcp_client
 from .config import settings
 from .routers import approvals, chat, demo, mock_as
 
@@ -52,6 +53,18 @@ def healthz() -> dict[str, object]:
         "orders_issuer": settings.orders.issuer,
         "required_acr": settings.required_acr,
     }
+
+
+@app.get("/warm")
+async def warm() -> dict[str, object]:
+    """Wake this service and the MCP server.
+
+    Called by the storefront on load so the free-tier containers are hot by
+    the time the shopper clicks anything. Always returns 200 — the whole
+    point is that a slow underlying service should not surface as an error.
+    """
+    mcp_ok = await mcp_client.warm()
+    return {"agent": True, "mcp": mcp_ok}
 
 
 @app.get("/agent/whoami")
