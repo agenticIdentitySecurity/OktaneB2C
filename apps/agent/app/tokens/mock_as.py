@@ -157,6 +157,8 @@ class MockTokenExchanger:
                     "sub": user["sub"],
                     "aud": user["aud"],
                     "iss": user["iss"],
+                    "iat": user.get("iat"),
+                    "exp": user.get("exp"),
                     "auth_time": user.get("auth_time"),
                     "acr": user.get("acr"),
                 },
@@ -190,7 +192,8 @@ class MockTokenExchanger:
                     "aud": target.issuer,
                     "scope": " ".join(scopes),
                     "token_type": _ID_JAG_TYPE,
-                    "exp_in": 60,
+                    "iat": now,
+                    "exp": now + 60,
                 },
             )
         )
@@ -227,7 +230,8 @@ class MockTokenExchanger:
                     "act.sub": settings.agent_client_id,
                     "scp": list(scopes),
                     "acr": user.get("acr"),
-                    "expires_in": 900,
+                    "iat": now,
+                    "exp": expires_at,
                 },
             )
         )
