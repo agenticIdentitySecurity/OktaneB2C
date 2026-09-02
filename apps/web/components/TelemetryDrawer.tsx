@@ -1,8 +1,17 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { Activity, X, Trash2 } from 'lucide-react';
 import type { TraceEvent } from '@/lib/types';
 import TraceStep from './TraceStep';
+import IdentityFlowSection from './IdentityFlowSection';
+
+interface WhoAmI {
+  agent_client_id: string;
+  workload_principal_id: string;
+  demo_mode: string;
+  token_exchange_impl: string;
+}
 
 /**
  * Plain language for the non-technical half of the room. The claims are right
@@ -74,6 +83,15 @@ export default function TelemetryDrawer({
   onClear: () => void;
 }) {
   const summary = summarize(events);
+  const [who, setWho] = useState<WhoAmI | null>(null);
+
+  useEffect(() => {
+    if (!open || who) return;
+    fetch('/api/whoami')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setWho(d as WhoAmI))
+      .catch(() => {});
+  }, [open, who]);
 
   return (
     <>
@@ -122,6 +140,25 @@ export default function TelemetryDrawer({
           </button>
         </div>
 
+        {who && (
+          <div className="flex items-center gap-2 border-b border-neutral-border/60 bg-neutral-bg/40 px-4 py-2 font-mono text-[10px] text-net-white/50">
+            <span className="text-net-white/35">agent</span>
+            <span className="text-tech-purple-light">{who.agent_client_id}</span>
+            <span className="ml-auto flex items-center gap-1.5">
+              <span
+                className={[
+                  'inline-block h-1.5 w-1.5 rounded-full',
+                  who.demo_mode === 'mock' ? 'bg-accent' : 'bg-okta-blue-light',
+                ].join(' ')}
+                aria-hidden
+              />
+              <span className="uppercase tracking-[0.08em] text-net-white/60">
+                {who.demo_mode}
+              </span>
+            </span>
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto px-4 py-4">
           {events.length === 0 ? (
             <p className="text-xs leading-relaxed text-net-white/40">
@@ -142,6 +179,7 @@ export default function TelemetryDrawer({
                   </ul>
                 </div>
               )}
+              <IdentityFlowSection events={events} />
               <ol className="space-y-4 border-l border-neutral-border/70 pl-0">
                 {events.map((event, i) => (
                   <TraceStep key={`${event.at}-${i}`} event={event} index={i} />

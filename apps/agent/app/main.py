@@ -54,6 +54,32 @@ def healthz() -> dict[str, object]:
     }
 
 
+@app.get("/agent/whoami")
+def whoami() -> dict[str, object]:
+    """Static identity of this agent — surfaced in the security trace header.
+
+    Everything here is public: the workload principal id doubles as the OIDC
+    client id, and the two custom authorization servers' issuers are advertised
+    on the MCP server too. No secrets, no tokens.
+    """
+    return {
+        "agent_client_id": settings.agent_client_id,
+        "workload_principal_id": settings.agent_client_id,
+        "demo_mode": settings.demo_mode,
+        "token_exchange_impl": "mock" if settings.mock else settings.token_exchange_impl,
+        "catalog": {
+            "issuer": settings.catalog.issuer,
+            "audience": settings.catalog.audience,
+            "scopes": list(settings.catalog.scopes),
+        },
+        "orders": {
+            "issuer": settings.orders.issuer,
+            "audience": settings.orders.audience,
+            "scopes": list(settings.orders.scopes),
+        },
+    }
+
+
 @app.on_event("startup")
 def announce() -> None:
     log.info("agent up  DEMO_MODE=%s  mcp=%s", settings.demo_mode, settings.mcp_url)
