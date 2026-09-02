@@ -11,6 +11,7 @@ import logging
 from typing import Any
 from urllib.parse import urlencode
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -18,6 +19,8 @@ from .. import mcp_client, telemetry
 from ..approvals.notifier import get_notifier
 from ..approvals.store import ApprovalConflict, store
 from ..config import settings
+from ..tokens import raw_flow
+from ..tokens.agent_key import agent_key
 from ..tokens.base import TraceEvent
 
 log = logging.getLogger("oktane.demo")
@@ -88,6 +91,27 @@ async def restock(body: RestockRequest) -> dict[str, Any]:
         )
 
     return {"restock": result, "approvals_raised": raised}
+
+
+class ForgetTokens(BaseModel):
+    id_token: str
+
+
+@router.post("/demo/forget-tokens")
+def forget_tokens(body: ForgetTokens) -> dict[str, Any]:
+    """Drop the shopper's cached access tokens so the next turn exchanges for real.
+
+    The cache in ``tokens.factory`` exists to keep demo latency watchable. That
+    makes it invisible whether a turn performed an exchange or reused one, which
+    is exactly what the walkthrough needs to assert. This is the only way to
+    observe a cold start without restarting the process.
+    """
+    from ..routers.chat import _identity
+    from ..tokens import factory
+
+    sub, _, _ = _identity(body.id_token)
+    factory.invalidate(sub)
+    return {"subject": sub, "cache": "cleared"}
 
 
 @router.get("/demo/catalog")
@@ -197,5 +221,135 @@ async def scope_probe(body: ScopeProbe) -> dict[str, Any]:
     return {
         "tool": body.tool,
         "all_refused": all(p["refused"] for p in probes),
+        "probes": probes,
+    }
+
+
+class ExchangeProbe(BaseModel):
+    id_token: str
+
+
+@router.post("/demo/exchange-probe")
+async def exchange_probe(body: ExchangeProbe) -> dict[str, Any]:
+    """Attack the *authorization server* rather than the resource server.
+
+    ``/demo/scope-probe`` proves the MCP server refuses a token it should not
+    honour. This proves the tier above it: that the agent cannot talk an
+    authorization server into minting a token it should never have issued.
+
+    Four attacks, each defeated by a different mechanism:
+
+    - **no client authentication** — there is no anonymous path to a token.
+    - **client assertion replayed at another endpoint** — assertions are bound to
+      one exact token URL, so capturing one buys nothing elsewhere.
+    - **a scope the server does not own** — the catalog server cannot grant
+      ``orders:write`` even if asked politely.
+    - **an ID-JAG crossed between servers** — a genuine catalog assertion is
+      refused by the orders server on its audience. This is the payoff for
+      running two issuers instead of one.
+    """
+    if not settings.mock:
+        raise HTTPException(
+            400,
+            "exchange-probe refuses to run against a real org: a burst of invalid "
+            "client assertions can trip Okta's client lockout. Run it in DEMO_MODE=mock, "
+            "where the wire protocol is identical.",
+        )
+
+    key = agent_key()
+    org_url = settings.org_token_url
+    catalog, orders = settings.catalog, settings.orders
+    probes: list[dict[str, Any]] = []
+
+    def record(label: str, expected: str, response: httpx.Response) -> None:
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        error = str(payload.get("error", ""))
+        probes.append(
+            {
+                "label": label,
+                "refused": not response.is_success,
+                "status": response.status_code,
+                "reason": error or ("minted a token" if response.is_success else "unknown"),
+                "as_expected": error == expected,
+                "detail": str(payload.get("error_description", ""))[:300],
+            }
+        )
+
+    def leg_one(**overrides: str) -> dict[str, str]:
+        form = {
+            "grant_type": raw_flow.TOKEN_EXCHANGE_GRANT,
+            "client_assertion_type": raw_flow.CLIENT_ASSERTION_TYPE,
+            "client_assertion": key.client_assertion(org_url),
+            "subject_token": body.id_token,
+            "subject_token_type": raw_flow.ID_TOKEN_TYPE,
+            "requested_token_type": raw_flow.ID_JAG_TYPE,
+            "scope": "catalog:read",
+            "audience": catalog.issuer,
+        }
+        form.update(overrides)
+        return form
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as http:
+        unauthenticated = leg_one()
+        unauthenticated.pop("client_assertion")
+        record(
+            "no client authentication",
+            "invalid_client",
+            await http.post(org_url, data=unauthenticated),
+        )
+
+        record(
+            "client assertion minted for another endpoint",
+            "invalid_client",
+            # Correctly signed, wrong audience: this one is valid at the catalog
+            # server's token endpoint, and only there.
+            await http.post(
+                org_url, data=leg_one(client_assertion=key.client_assertion(catalog.token_url))
+            ),
+        )
+
+        record(
+            "scope the catalog server does not own",
+            "invalid_scope",
+            await http.post(org_url, data=leg_one(scope="orders:write")),
+        )
+
+        # A genuine, fully valid catalog assertion — then presented to the orders
+        # server, which is the one thing the two-issuer split exists to stop.
+        crossing = "ID-JAG crossed to the other authorization server"
+        genuine = await http.post(org_url, data=leg_one())
+        if not genuine.is_success:
+            probes.append(
+                {
+                    "label": crossing,
+                    "refused": False,
+                    "status": genuine.status_code,
+                    "reason": "could not obtain a genuine assertion to misuse",
+                    "as_expected": False,
+                    "detail": genuine.text[:300],
+                }
+            )
+        else:
+            record(
+                crossing,
+                "invalid_grant",
+                await http.post(
+                    orders.token_url,
+                    data={
+                        "grant_type": raw_flow.JWT_BEARER_GRANT,
+                        "client_assertion_type": raw_flow.CLIENT_ASSERTION_TYPE,
+                        "client_assertion": key.client_assertion(orders.token_url),
+                        "assertion": genuine.json()["access_token"],
+                    },
+                ),
+            )
+
+    return {
+        "issuer": settings.org_issuer,
+        "all_refused": all(p["refused"] for p in probes),
+        "as_expected": all(p["as_expected"] for p in probes),
         "probes": probes,
     }

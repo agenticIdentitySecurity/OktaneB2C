@@ -18,8 +18,16 @@ _cache: dict[tuple[str, str, tuple[str, ...]], ExchangeResult] = {}
 
 
 def get_exchanger() -> TokenExchanger:
-    impl = settings.token_exchange_impl
-    if impl in {"mock", ""} or settings.mock:
+    """Pick an implementation.
+
+    ``DEMO_MODE`` and ``TOKEN_EXCHANGE_IMPL`` are orthogonal: the first decides
+    *which issuer* (local or a real org), the second decides *how* the exchange is
+    performed (in-process, over HTTP, or through the SDK). ``mock`` + ``raw`` is a
+    deliberately supported pairing — it runs the real wire protocol, including
+    ``private_key_jwt``, against the local authorization servers.
+    """
+    impl = settings.token_exchange_impl or ("mock" if settings.mock else "raw")
+    if impl == "mock":
         return MockTokenExchanger()
     if impl == "raw":
         from .raw_flow import RawIdJagExchanger

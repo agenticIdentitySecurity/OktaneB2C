@@ -47,6 +47,15 @@ class AuthServer:
     audience: str
     scopes: tuple[str, ...]
 
+    @property
+    def token_url(self) -> str:
+        """Leg 2 of the exchange posts here — the *custom* AS, not the org one."""
+        return f"{self.issuer}/v1/token"
+
+    @property
+    def keys_url(self) -> str:
+        return f"{self.issuer}/v1/keys"
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -71,6 +80,7 @@ class Settings:
     agent_private_key_jwk: str = field(
         default_factory=lambda: _env("OKTA_AGENT_PRIVATE_KEY_JWK")
     )
+    agent_key_id: str = field(default_factory=lambda: _env("OKTA_AGENT_KEY_ID"))
     token_exchange_impl: str = field(
         default_factory=lambda: _env("TOKEN_EXCHANGE_IMPL", "mock").lower()
     )
@@ -97,6 +107,27 @@ class Settings:
     @property
     def mock(self) -> bool:
         return self.demo_mode == "mock"
+
+    @property
+    def org_issuer(self) -> str:
+        """The **org** authorization server, which mints ID-JAGs.
+
+        Leg 1 of Cross App Access goes here, not to the custom AS — the org AS is
+        the only party that can assert "this agent may act for this user against
+        that resource". Leg 2 then goes to the custom AS named in the assertion.
+        """
+        if self.mock:
+            return f"{self.public_base}/mock-as/org"
+        if not self.okta_domain.startswith("https://"):
+            raise ValueError(
+                f"OKTA_DOMAIN must be an https:// org URL when DEMO_MODE={self.demo_mode}; "
+                f"got {self.okta_domain!r}"
+            )
+        return f"{self.okta_domain.rstrip('/')}/oauth2"
+
+    @property
+    def org_token_url(self) -> str:
+        return f"{self.org_issuer}/v1/token"
 
     @property
     def catalog(self) -> AuthServer:

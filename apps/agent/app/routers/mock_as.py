@@ -12,14 +12,28 @@ import base64
 import hashlib
 import secrets
 import time
+import uuid
 from typing import Any
 from urllib.parse import urlencode
 
+import jwt
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from ..config import settings
-from ..tokens.mock_as import MOCK_USER_ISSUER, keys, mint_user_id_token
+from ..config import AuthServer, settings
+from ..tokens.agent_key import agent_key
+from ..tokens.base import TokenExchangeError
+from ..tokens.mock_as import MOCK_USER_ISSUER, keys, mint_user_id_token, read_user_id_token
+
+# Imported rather than restated so the client and this server cannot drift apart
+# on the wire constants — if they did, testing raw mode here would prove nothing.
+from ..tokens.raw_flow import (
+    CLIENT_ASSERTION_TYPE,
+    ID_JAG_TYPE,
+    ID_TOKEN_TYPE,
+    JWT_BEARER_GRANT,
+    TOKEN_EXCHANGE_GRANT,
+)
 
 router = APIRouter(prefix="/mock-as", tags=["mock-as"])
 
@@ -47,6 +61,8 @@ def _issuer_for(name: str) -> str:
         return settings.orders.issuer
     if name == "users":
         return MOCK_USER_ISSUER
+    if name == "org":
+        return settings.org_issuer
     raise HTTPException(404, f"unknown authorization server {name}")
 
 
@@ -207,6 +223,188 @@ async def token(request: Request) -> JSONResponse:
         nonce=entry["nonce"],
     )
     return JSONResponse({"token_type": "Bearer", "expires_in": 3600, "id_token": id_token})
+
+
+class _OAuthError(Exception):
+    """An OAuth error body, so the client's verbatim-error path is exercised."""
+
+    def __init__(self, error: str, description: str, status: int = 400) -> None:
+        super().__init__(description)
+        self.error = error
+        self.description = description
+        self.status = status
+
+    def response(self) -> JSONResponse:
+        return JSONResponse(
+            {"error": self.error, "error_description": self.description},
+            status_code=self.status,
+        )
+
+
+def _server_by(field: str, value: str) -> AuthServer:
+    for server in (settings.catalog, settings.orders):
+        if getattr(server, field) == value:
+            return server
+    raise _OAuthError("invalid_target", f"no authorization server with {field}={value!r}")
+
+
+def _verify_client_assertion(form: dict[str, Any], token_url: str) -> None:
+    """Authenticate the agent by signature. There is no client secret to leak.
+
+    A real org looks the public key up from the agent's registration; here the
+    agent and its registrar are the same process, so we read the public half
+    directly. The check itself is identical either way.
+    """
+    if form.get("client_assertion_type") != CLIENT_ASSERTION_TYPE:
+        raise _OAuthError(
+            "invalid_client", "private_key_jwt is the only supported client authentication", 401
+        )
+    try:
+        claims = jwt.decode(
+            str(form.get("client_assertion", "")),
+            agent_key().private_key.public_key(),
+            algorithms=["RS256"],
+            audience=token_url,
+            options={"require": ["exp", "iss", "sub", "aud"]},
+        )
+    except jwt.PyJWTError as exc:
+        # Includes the replay case: an assertion minted for the org token endpoint
+        # fails the audience check here, and vice versa.
+        raise _OAuthError("invalid_client", f"client assertion rejected: {exc}", 401) from exc
+
+    if claims.get("iss") != claims.get("sub"):
+        raise _OAuthError(
+            "invalid_client", "client assertion iss and sub must both be the client id", 401
+        )
+    if claims.get("sub") != settings.agent_client_id:
+        raise _OAuthError("invalid_client", f"unknown client {claims.get('sub')!r}", 401)
+
+
+@router.post("/org/v1/token")
+async def org_token(request: Request) -> JSONResponse:
+    """Leg 1 — RFC 8693. The shopper's ID token buys an audience-bound ID-JAG.
+
+    Only the org authorization server can issue this: it is the party that knows
+    both the shopper and the agent, and its assertion is what lets a *different*
+    authorization server trust the pairing.
+    """
+    form = dict(await request.form())
+    try:
+        _verify_client_assertion(form, f"{settings.org_issuer}/v1/token")
+
+        if form.get("grant_type") != TOKEN_EXCHANGE_GRANT:
+            raise _OAuthError(
+                "unsupported_grant_type", f"expected {TOKEN_EXCHANGE_GRANT}"
+            )
+        if form.get("subject_token_type") != ID_TOKEN_TYPE:
+            raise _OAuthError("invalid_request", f"subject_token_type must be {ID_TOKEN_TYPE}")
+        if form.get("requested_token_type") != ID_JAG_TYPE:
+            raise _OAuthError("invalid_request", f"requested_token_type must be {ID_JAG_TYPE}")
+
+        try:
+            user = read_user_id_token(str(form.get("subject_token", "")))
+        except TokenExchangeError as exc:
+            raise _OAuthError("invalid_grant", f"subject_token rejected: {exc.detail}") from exc
+
+        target = _server_by("issuer", str(form.get("audience", "")))
+        scope = str(form.get("scope", "")).strip()
+        if len(scope.split()) != 1:
+            raise _OAuthError("invalid_scope", "request exactly one scope per exchange")
+        if scope not in target.scopes:
+            raise _OAuthError("invalid_scope", f"{target.name} does not grant {scope}")
+    except _OAuthError as exc:
+        return exc.response()
+
+    now = int(time.time())
+    claims: dict[str, Any] = {
+        "iss": settings.org_issuer,
+        "sub": user["sub"],
+        "aud": target.issuer,
+        "client_id": settings.agent_client_id,
+        "scope": scope,
+        "iat": now,
+        "exp": now + 60,
+        "jti": uuid.uuid4().hex,
+        "token_type": ID_JAG_TYPE,
+    }
+    # The authentication context has to ride along: leg 2 never sees the ID token,
+    # so without this the orders:write access token could not carry `acr` and the
+    # step-up gate would have nothing to prove.
+    if user.get("auth_time"):
+        claims["auth_time"] = user["auth_time"]
+    if user.get("acr"):
+        claims["acr"] = user["acr"]
+
+    return JSONResponse(
+        {
+            "access_token": keys.sign(settings.org_issuer, claims),
+            "issued_token_type": ID_JAG_TYPE,
+            "token_type": "N_A",
+            "expires_in": 60,
+            "scope": scope,
+        }
+    )
+
+
+@router.post("/{name}/v1/token")
+async def resource_token(name: str, request: Request) -> JSONResponse:
+    """Leg 2 — RFC 7523. The ID-JAG buys one scoped access token.
+
+    Declared after ``/users/v1/token`` on purpose: FastAPI matches in declaration
+    order, so the PKCE code-redemption route above still wins for ``users``.
+    """
+    form = dict(await request.form())
+    try:
+        target = _server_by("name", f"oktane-{name}")
+        _verify_client_assertion(form, target.token_url)
+
+        if form.get("grant_type") != JWT_BEARER_GRANT:
+            raise _OAuthError("unsupported_grant_type", f"expected {JWT_BEARER_GRANT}")
+
+        try:
+            jag = keys.verify(str(form.get("assertion", "")), settings.org_issuer, target.issuer)
+        except jwt.PyJWTError as exc:
+            # An assertion minted for the other authorization server dies here on
+            # its audience — that is the isolation the two issuers buy.
+            raise _OAuthError("invalid_grant", f"assertion rejected: {exc}") from exc
+
+        if jag.get("token_type") != ID_JAG_TYPE:
+            raise _OAuthError("invalid_grant", "assertion is not an ID-JAG")
+        if jag.get("client_id") != settings.agent_client_id:
+            raise _OAuthError("invalid_grant", "assertion was issued to a different client")
+
+        scope = str(jag.get("scope", "")).strip()
+        if scope not in target.scopes:
+            raise _OAuthError("invalid_scope", f"{target.name} does not grant {scope}")
+    except _OAuthError as exc:
+        return exc.response()
+
+    now = int(time.time())
+    lifetime = 900
+    access_token = keys.sign(
+        target.issuer,
+        {
+            "iss": target.issuer,
+            "aud": target.audience,
+            "sub": jag["sub"],
+            "cid": settings.agent_client_id,
+            "act": {"sub": settings.agent_client_id},
+            "scp": [scope],
+            "iat": now,
+            "exp": now + lifetime,
+            "jti": uuid.uuid4().hex,
+            **({"auth_time": jag["auth_time"]} if jag.get("auth_time") else {}),
+            **({"acr": jag["acr"]} if jag.get("acr") else {}),
+        },
+    )
+    return JSONResponse(
+        {
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "expires_in": lifetime,
+            "scope": scope,
+        }
+    )
 
 
 def _only_shopper() -> dict[str, str]:
