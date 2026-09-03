@@ -77,6 +77,16 @@ class Settings:
     agent_client_id: str = field(
         default_factory=lambda: _env("OKTA_AGENT_CLIENT_ID", "wlp-oktane-demo-agent")
     )
+    # The storefront the shopper actually signs into, distinct from the agent.
+    # Its ID token is what seeds leg 1, and step-up re-authenticates against it.
+    # The agent is a workload principal: it authenticates with a private key and
+    # has no redirect URI, so it cannot stand in here.
+    storefront_client_id: str = field(
+        default_factory=lambda: _env("OKTA_STOREFRONT_CLIENT_ID")
+    )
+    storefront_client_secret: str = field(
+        default_factory=lambda: _env("OKTA_STOREFRONT_CLIENT_SECRET")
+    )
     agent_private_key_jwk: str = field(
         default_factory=lambda: _env("OKTA_AGENT_PRIVATE_KEY_JWK")
     )
@@ -128,6 +138,42 @@ class Settings:
     @property
     def org_token_url(self) -> str:
         return f"{self.org_issuer}/v1/token"
+
+    @property
+    def user_authorize_url(self) -> str:
+        """Where a *human* is sent to authenticate.
+
+        Mock mode serves its own consent form; the real org uses the same
+        endpoints as ``org_issuer``, which is also what validates that
+        ``OKTA_DOMAIN`` already carries its scheme.
+        """
+        if self.mock:
+            return f"{self.public_base}/mock-as/users/v1/authorize"
+        return f"{self.org_issuer}/v1/authorize"
+
+    @property
+    def user_token_url(self) -> str:
+        if self.mock:
+            return f"{self.public_base}/mock-as/users/v1/token"
+        return f"{self.org_issuer}/v1/token"
+
+    @property
+    def user_token_issuer(self) -> str:
+        """The ``iss`` a shopper's ID token actually carries.
+
+        Deliberately not ``org_issuer``. Okta's org authorization server serves
+        its endpoints under ``/oauth2/v1/*`` but stamps tokens with the bare org
+        URL, so reusing ``org_issuer`` here rejects every valid token.
+        """
+        if self.mock:
+            return f"{self.public_base}/mock-as/users"
+        return self.okta_domain.rstrip("/")
+
+    @property
+    def user_keys_url(self) -> str:
+        if self.mock:
+            return f"{self.public_base}/mock-as/users/v1/keys"
+        return f"{self.org_issuer}/v1/keys"
 
     @property
     def catalog(self) -> AuthServer:

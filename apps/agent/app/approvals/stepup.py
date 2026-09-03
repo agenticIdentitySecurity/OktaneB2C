@@ -89,7 +89,7 @@ def start(approval_id: str, code: str) -> str:
     store.bind_state(state, approval_id, verifier, nonce)
 
     params = {
-        "client_id": settings.agent_client_id,
+        "client_id": settings.storefront_client_id,
         "response_type": "code",
         "scope": "openid profile email",
         "redirect_uri": callback_url(),
@@ -103,27 +103,30 @@ def start(approval_id: str, code: str) -> str:
         "prompt": "login",
     }
 
-    if settings.mock:
-        return f"{settings.public_base}/mock-as/users/v1/authorize?{urlencode(params)}"
-    return f"https://{settings.okta_domain}/oauth2/v1/authorize?{urlencode(params)}"
+    return f"{settings.user_authorize_url}?{urlencode(params)}"
 
 
 async def _redeem(auth_code: str, verifier: str) -> str:
-    """Trade the authorization code for an ID token."""
+    """Trade the authorization code for an ID token.
+
+    The storefront is a confidential client, so PKCE is defence in depth here
+    rather than the only proof of possession: the secret goes in a Basic header,
+    never the body, and never near a URL.
+    """
     body = {
         "grant_type": "authorization_code",
         "code": auth_code,
         "redirect_uri": callback_url(),
-        "client_id": settings.agent_client_id,
+        "client_id": settings.storefront_client_id,
         "code_verifier": verifier,
     }
-    url = (
-        f"{settings.public_base}/mock-as/users/v1/token"
-        if settings.mock
-        else f"https://{settings.okta_domain}/oauth2/v1/token"
+    auth = (
+        (settings.storefront_client_id, settings.storefront_client_secret)
+        if settings.storefront_client_secret
+        else None
     )
     async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.post(url, data=body)
+        response = await client.post(settings.user_token_url, data=body, auth=auth)
     payload = response.json()
     if "id_token" not in payload:
         raise StepUpError(
