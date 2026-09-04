@@ -27,10 +27,12 @@ from .base import ExchangeResult, TokenExchangeError, TraceEvent
 
 _ID_JAG_TYPE = "urn:ietf:params:oauth:token-type:id-jag"
 
-# The user-facing OIDC app. In mock mode the agent also plays this role so a
-# shopper can "sign in" without an org; Phase 3 replaces it with real Okta.
+# The shopper's ID token is minted for the agent's own client id, matching what a
+# real org enforces: leg 1 accepts only a subject token issued to the requesting
+# client. Using a separate storefront audience here would let mock mode pass a
+# chain that the real org rejects.
 MOCK_USER_ISSUER = f"{settings.public_base}/mock-as/users"
-MOCK_USER_AUDIENCE = "oktane-b2c-storefront"
+MOCK_USER_AUDIENCE = settings.agent_client_id
 
 
 class MockKeys:

@@ -74,18 +74,13 @@ class Settings:
     )
 
     okta_domain: str = field(default_factory=lambda: _env("OKTA_DOMAIN"))
+    # Also the client the *shopper* signs into. Okta refuses ID_TOKEN delegation
+    # links ("register the agent with a signOnProvider to use its ID tokens") and
+    # leg 1 accepts only a subject token minted for the requesting client, so the
+    # agent's own app must be the relying party. A separate storefront app cannot
+    # seed the exchange no matter how it is configured.
     agent_client_id: str = field(
         default_factory=lambda: _env("OKTA_AGENT_CLIENT_ID", "wlp-oktane-demo-agent")
-    )
-    # The storefront the shopper actually signs into, distinct from the agent.
-    # Its ID token is what seeds leg 1, and step-up re-authenticates against it.
-    # The agent is a workload principal: it authenticates with a private key and
-    # has no redirect URI, so it cannot stand in here.
-    storefront_client_id: str = field(
-        default_factory=lambda: _env("OKTA_STOREFRONT_CLIENT_ID")
-    )
-    storefront_client_secret: str = field(
-        default_factory=lambda: _env("OKTA_STOREFRONT_CLIENT_SECRET")
     )
     agent_private_key_jwk: str = field(
         default_factory=lambda: _env("OKTA_AGENT_PRIVATE_KEY_JWK")
