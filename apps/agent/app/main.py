@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import mcp_client
 from .config import settings
-from .routers import approvals, chat, demo, mock_as
+from .routers import approvals, auth, chat, demo, mock_as
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +36,7 @@ app.add_middleware(
 )
 
 app.include_router(chat.router)
+app.include_router(auth.router)
 app.include_router(approvals.router)
 app.include_router(demo.router)
 if settings.mock:

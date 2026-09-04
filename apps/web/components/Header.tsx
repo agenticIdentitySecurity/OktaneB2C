@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ShoppingCart, ShieldCheck, User, LogOut, ChevronDown } from 'lucide-react';
 import type { Profile } from '@/lib/types';
 
@@ -16,6 +16,16 @@ export default function Header({
   onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  // demo_mode from the agent — 'mock' shows the shopper picker; anything else
+  // (real Okta) redirects the browser to /auth/login for the OIDC dance.
+  const [demoMode, setDemoMode] = useState<string | null>(null);
+  useEffect(() => {
+    fetch('/api/whoami')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setDemoMode(d.demo_mode))
+      .catch(() => {});
+  }, []);
+  const isOkta = demoMode !== null && demoMode !== 'mock';
 
   return (
     <header className="sticky top-0 z-30 border-b border-neutral-border bg-neutral-bg/85 backdrop-blur-md">
@@ -80,6 +90,14 @@ export default function Header({
                 <LogOut className="h-4 w-4" />
               </button>
             </div>
+          ) : isOkta ? (
+            <a
+              href="/auth/login?return_to=/"
+              className="flex items-center gap-2 rounded-lg border border-okta-blue/40 bg-okta-blue/10 px-3 py-2 text-sm font-medium text-okta-blue-light hover:bg-okta-blue/20"
+            >
+              <User className="h-4 w-4" />
+              <span className="hidden sm:inline">Sign in with Okta</span>
+            </a>
           ) : (
             <div className="relative">
               <button
