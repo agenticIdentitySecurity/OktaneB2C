@@ -18,6 +18,7 @@ import httpx
 
 AGENT = "http://localhost:8788"
 MCP = "http://localhost:8787"
+BASKETBALL = "CourtEdge Official Game Basketball"
 
 PASS, FAIL = "PASS", "FAIL"
 results: list[tuple[str, str, str]] = []
@@ -45,6 +46,16 @@ def chat(client: httpx.Client, message: str, id_token: str) -> dict:
     )
     response.raise_for_status()
     return response.json()
+
+
+def basketballs(turn: dict) -> int:
+    """Count *placed orders* for the basketball, from structured data.
+
+    Counting the prose would conflate a pending standing intent with a real
+    order — both are rendered with the product name — and the whole point of
+    beat 5 is that the intent is not a purchase.
+    """
+    return sum(1 for order in turn.get("orders", []) if order.get("product_name") == BASKETBALL)
 
 
 def hidden_fields(html: str) -> dict[str, str]:
@@ -75,6 +86,15 @@ def main() -> int:
     beat("1", "shopper signs in")
     id_token = signin(client, "alex@oktane.demo")
     check("shopper holds an ID token", bool(id_token))
+
+    # The demo is a story about state changing, so it cannot start from whatever
+    # state the last run left behind: size 7 must be out of stock before we claim
+    # it is, and the token cache must be cold before "an exchange happened" means
+    # anything.
+    stock = client.post(f"{MCP}/demo/restock", json={"sku": "CE-BB-GAME-7", "stock": 0}).json()
+    check("size 7 starts out of stock", stock["after"] == 0, f"was {stock['before']}")
+    cache = client.post(f"{AGENT}/demo/forget-tokens", json={"id_token": id_token}).json()
+    check("token cache is cold", cache["cache"] == "cleared", cache["subject"])
 
     beat("2-4", "asks for a size; answer requires an authorized data call")
     turn = chat(client, "What size basketball should I get for a 16-year-old?", id_token)
@@ -107,8 +127,11 @@ def main() -> int:
     check("standing intent recorded", intent.get("state") == "PENDING_STOCK", intent.get("intent_id", ""))
     check("intent targets the out-of-stock size 7", intent.get("variant_sku") == "CE-BB-GAME-7")
     orders_before = chat(client, "what are my orders?", id_token)
-    check("no order exists yet", "don't have any orders" in orders_before["reply"]
-          or "standing order" in orders_before["reply"], orders_before["reply"][:60])
+    check("the intent is pending, not purchased", intent.get("state") == "PENDING_STOCK",
+          orders_before["reply"][:60])
+    # Orders accumulate across demo runs, so "bought exactly one" is a delta from
+    # here, not an absolute count.
+    orders_at_start = basketballs(orders_before)
 
     beat("scope", "API Access Management: the wrong token is refused")
     probe = client.post(f"{AGENT}/demo/scope-probe", json={"id_token": id_token}).json()
@@ -118,8 +141,15 @@ def main() -> int:
               result["refused"] and result.get("as_expected", False),
               str(result.get("detail", ""))[:80])
 
+    beat("exchange", "the authorization server refuses to over-issue")
+    issued = client.post(f"{AGENT}/demo/exchange-probe", json={"id_token": id_token}).json()
+    check("every attack on the token endpoints refused", issued["all_refused"] is True)
+    for result in issued["probes"]:
+        check(f"{result['label']} -> {result.get('reason')}",
+              result["refused"] and result.get("as_expected", False),
+              str(result.get("detail", ""))[:80])
+
     beat("6", "restock fires, standing intent wakes, approval raised")
-    restock = client.post(f"{MCP}/demo/restock", json={"sku": "CE-BB-GAME-7", "stock": 0}).json()
     restock = client.post(f"{AGENT}/demo/restock",
                           json={"sku": "CE-BB-GAME-7", "stock": 12}).json()
     raised = restock["approvals_raised"]
@@ -193,8 +223,9 @@ def main() -> int:
     check("replayed decision refused", again.status_code in (403, 409),
           f"HTTP {again.status_code}")
     orders_after = chat(client, "what are my orders?", id_token)
-    count = orders_after["reply"].count("CourtEdge Official Game Basketball")
-    check("exactly one order on the account", count == 1, orders_after["reply"][:90])
+    placed = basketballs(orders_after) - orders_at_start
+    check("the approval bought exactly one basketball", placed == 1,
+          f"{placed} order(s) added by this run")
 
     return summarize()
 

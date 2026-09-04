@@ -91,6 +91,7 @@ async def chat(body: ChatRequest) -> dict[str, object]:
         "reply": state.get("reply", ""),
         "kind": state.get("kind", "general"),
         "intent": state.get("intent"),
+        "orders": state.get("orders", []),
         "pending_intents": intents,
         "trace": [event.public() for event in state.get("trace", [])],
         "llm": "anthropic" if llm_available() else "deterministic",

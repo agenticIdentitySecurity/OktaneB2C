@@ -27,10 +27,12 @@ from .base import ExchangeResult, TokenExchangeError, TraceEvent
 
 _ID_JAG_TYPE = "urn:ietf:params:oauth:token-type:id-jag"
 
-# The user-facing OIDC app. In mock mode the agent also plays this role so a
-# shopper can "sign in" without an org; Phase 3 replaces it with real Okta.
+# The shopper's ID token is minted for the agent's own client id, matching what a
+# real org enforces: leg 1 accepts only a subject token issued to the requesting
+# client. Using a separate storefront audience here would let mock mode pass a
+# chain that the real org rejects.
 MOCK_USER_ISSUER = f"{settings.public_base}/mock-as/users"
-MOCK_USER_AUDIENCE = "oktane-b2c-storefront"
+MOCK_USER_AUDIENCE = settings.agent_client_id
 
 
 class MockKeys:
@@ -166,11 +168,12 @@ class MockTokenExchanger:
         ]
 
         # Leg 1 — RFC 8693 token exchange: ID token in, ID-JAG assertion out,
-        # bound to exactly one target authorization server.
+        # bound to exactly one target authorization server. The *org* server
+        # issues it, which is why `iss` is not the agent.
         id_jag = keys.sign(
-            target.issuer,
+            settings.org_issuer,
             {
-                "iss": settings.agent_client_id,
+                "iss": settings.org_issuer,
                 "sub": user["sub"],
                 "aud": target.issuer,
                 "client_id": settings.agent_client_id,
@@ -179,6 +182,8 @@ class MockTokenExchanger:
                 "exp": now + 60,
                 "jti": uuid.uuid4().hex,
                 "token_type": _ID_JAG_TYPE,
+                **({"auth_time": user["auth_time"]} if user.get("auth_time") else {}),
+                **({"acr": user["acr"]} if user.get("acr") else {}),
             },
         )
         trace.append(
@@ -187,7 +192,7 @@ class MockTokenExchanger:
                 label=f"ID-JAG for {target.name}",
                 detail=f"aud={target.issuer} scope={' '.join(scopes)}",
                 claims={
-                    "iss": settings.agent_client_id,
+                    "iss": settings.org_issuer,
                     "sub": user["sub"],
                     "aud": target.issuer,
                     "scope": " ".join(scopes),

@@ -47,6 +47,15 @@ class AuthServer:
     audience: str
     scopes: tuple[str, ...]
 
+    @property
+    def token_url(self) -> str:
+        """Leg 2 of the exchange posts here — the *custom* AS, not the org one."""
+        return f"{self.issuer}/v1/token"
+
+    @property
+    def keys_url(self) -> str:
+        return f"{self.issuer}/v1/keys"
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -65,12 +74,18 @@ class Settings:
     )
 
     okta_domain: str = field(default_factory=lambda: _env("OKTA_DOMAIN"))
+    # Also the client the *shopper* signs into. Okta refuses ID_TOKEN delegation
+    # links ("register the agent with a signOnProvider to use its ID tokens") and
+    # leg 1 accepts only a subject token minted for the requesting client, so the
+    # agent's own app must be the relying party. A separate storefront app cannot
+    # seed the exchange no matter how it is configured.
     agent_client_id: str = field(
         default_factory=lambda: _env("OKTA_AGENT_CLIENT_ID", "wlp-oktane-demo-agent")
     )
     agent_private_key_jwk: str = field(
         default_factory=lambda: _env("OKTA_AGENT_PRIVATE_KEY_JWK")
     )
+    agent_key_id: str = field(default_factory=lambda: _env("OKTA_AGENT_KEY_ID"))
     token_exchange_impl: str = field(
         default_factory=lambda: _env("TOKEN_EXCHANGE_IMPL", "mock").lower()
     )
@@ -97,6 +112,63 @@ class Settings:
     @property
     def mock(self) -> bool:
         return self.demo_mode == "mock"
+
+    @property
+    def org_issuer(self) -> str:
+        """The **org** authorization server, which mints ID-JAGs.
+
+        Leg 1 of Cross App Access goes here, not to the custom AS — the org AS is
+        the only party that can assert "this agent may act for this user against
+        that resource". Leg 2 then goes to the custom AS named in the assertion.
+        """
+        if self.mock:
+            return f"{self.public_base}/mock-as/org"
+        if not self.okta_domain.startswith("https://"):
+            raise ValueError(
+                f"OKTA_DOMAIN must be an https:// org URL when DEMO_MODE={self.demo_mode}; "
+                f"got {self.okta_domain!r}"
+            )
+        return f"{self.okta_domain.rstrip('/')}/oauth2"
+
+    @property
+    def org_token_url(self) -> str:
+        return f"{self.org_issuer}/v1/token"
+
+    @property
+    def user_authorize_url(self) -> str:
+        """Where a *human* is sent to authenticate.
+
+        Mock mode serves its own consent form; the real org uses the same
+        endpoints as ``org_issuer``, which is also what validates that
+        ``OKTA_DOMAIN`` already carries its scheme.
+        """
+        if self.mock:
+            return f"{self.public_base}/mock-as/users/v1/authorize"
+        return f"{self.org_issuer}/v1/authorize"
+
+    @property
+    def user_token_url(self) -> str:
+        if self.mock:
+            return f"{self.public_base}/mock-as/users/v1/token"
+        return f"{self.org_issuer}/v1/token"
+
+    @property
+    def user_token_issuer(self) -> str:
+        """The ``iss`` a shopper's ID token actually carries.
+
+        Deliberately not ``org_issuer``. Okta's org authorization server serves
+        its endpoints under ``/oauth2/v1/*`` but stamps tokens with the bare org
+        URL, so reusing ``org_issuer`` here rejects every valid token.
+        """
+        if self.mock:
+            return f"{self.public_base}/mock-as/users"
+        return self.okta_domain.rstrip("/")
+
+    @property
+    def user_keys_url(self) -> str:
+        if self.mock:
+            return f"{self.public_base}/mock-as/users/v1/keys"
+        return f"{self.org_issuer}/v1/keys"
 
     @property
     def catalog(self) -> AuthServer:

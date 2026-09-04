@@ -103,27 +103,33 @@ def start(approval_id: str, code: str) -> str:
         "prompt": "login",
     }
 
-    if settings.mock:
-        return f"{settings.public_base}/mock-as/users/v1/authorize?{urlencode(params)}"
-    return f"https://{settings.okta_domain}/oauth2/v1/authorize?{urlencode(params)}"
+    return f"{settings.user_authorize_url}?{urlencode(params)}"
 
 
 async def _redeem(auth_code: str, verifier: str) -> str:
-    """Trade the authorization code for an ID token."""
+    """Trade the authorization code for an ID token.
+
+    The agent has no client secret — it authenticates with the same
+    ``private_key_jwt`` assertion it uses on both legs of the exchange, so this
+    redemption proves possession of the agent's key as well as of the PKCE
+    verifier.
+    """
+    from ..tokens.agent_key import agent_key
+
+    token_url = settings.user_token_url
     body = {
         "grant_type": "authorization_code",
         "code": auth_code,
         "redirect_uri": callback_url(),
         "client_id": settings.agent_client_id,
         "code_verifier": verifier,
+        "client_assertion_type": (
+            "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+        ),
+        "client_assertion": agent_key().client_assertion(token_url),
     }
-    url = (
-        f"{settings.public_base}/mock-as/users/v1/token"
-        if settings.mock
-        else f"https://{settings.okta_domain}/oauth2/v1/token"
-    )
     async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.post(url, data=body)
+        response = await client.post(token_url, data=body)
     payload = response.json()
     if "id_token" not in payload:
         raise StepUpError(

@@ -98,35 +98,48 @@ Source of truth: `packages/mcp-server/src/scopes.ts`.
 
 ### The two-leg exchange (ID-JAG / Cross App Access)
 
-Each token the agent uses is produced by two RFC-standard hops, and the second
-one is what binds the agent's own identity to the shopper's:
+Each token the agent uses is produced by two RFC-standard hops, and **the two legs
+go to two different authorization servers**. That is the part most easily got
+wrong: leg 1 does not go to the resource's own authorization server.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant A as agent
-    participant AS as authorization server
+    participant ORG as org AS<br/>{domain}/oauth2
+    participant AS as custom AS<br/>oktane-catalog / oktane-orders
     participant M as MCP server
 
-    A->>AS: leg 1 — RFC 8693 token-exchange<br/>subject_token = shopper id_token<br/>requested_token_type = ...token-type:id-jag<br/>audience = target AS issuer
-    AS-->>A: ID-JAG assertion, audience-bound
-    A->>AS: leg 2 — RFC 7523 jwt-bearer<br/>assertion = the ID-JAG<br/>scope = exactly one scope
+    A->>ORG: leg 1 — RFC 8693 token-exchange<br/>subject_token = shopper id_token<br/>requested_token_type = ...token-type:id-jag<br/>audience = target custom AS issuer<br/>scope = the one scope wanted
+    ORG-->>A: ID-JAG assertion, audience-bound
+    A->>AS: leg 2 — RFC 7523 jwt-bearer<br/>assertion = the ID-JAG<br/>(no scope parameter)
     AS-->>A: access token<br/>sub = shopper, act/cid = agent
     A->>M: JSON-RPC tools/call + Bearer
     M->>AS: GET /v1/keys
     M-->>A: 200, or 403 insufficient_scope / wrong_audience
 ```
 
-Against a real org, client authentication on both legs is `private_key_jwt`
-(RS256, 60-second assertions). There is no client secret — the agent's private JWK
-never leaves `apps/agent/.env`, and only its public half is registered with Okta.
-The agent's workload principal id *is* its OIDC client id.
+Only the **org** authorization server can assert "this agent may act for this
+user against that resource", so leg 1 is addressed to it and names the target
+custom AS in `audience`. Leg 2 then goes to the custom AS named in the assertion,
+and carries **no `scope` parameter** — the scope was fixed at leg 1 and rides
+inside the assertion. Asking for scope again at leg 2 is how you get a confusing
+`invalid_scope`.
 
-> **Status.** Today only the mock exchanger exists
-> (`apps/agent/app/tokens/mock_as.py`). `TOKEN_EXCHANGE_IMPL` already selects
-> between `mock`, `raw`, and `sdk`, but `raw_flow.py` and `sdk_flow.py` are not
-> written yet — see §10. The two-leg shape, the claim set, and every verification
-> the MCP server performs are real today; the issuer is local.
+Client authentication on both legs is `private_key_jwt` (RS256, 60-second
+assertions). There is no client secret — the agent's private JWK never leaves
+`apps/agent/.env`, and only its public half is registered with Okta. The agent's
+workload principal id *is* its OIDC client id. Each assertion's `aud` is the
+exact token endpoint URL, so one captured en route to the org server is worthless
+against a custom one; `/demo/exchange-probe` provokes exactly that failure.
+
+> **Status.** Both `mock` (in-process) and `raw` (real HTTP, real
+> `private_key_jwt`) exchangers exist. `DEMO_MODE` and `TOKEN_EXCHANGE_IMPL` are
+> orthogonal: the first picks *which issuer*, the second picks *how* the exchange
+> is performed. `DEMO_MODE=mock` + `TOKEN_EXCHANGE_IMPL=raw` is a supported
+> pairing that runs the full wire protocol against the local authorization
+> servers, so pointing at a real org is a URL swap. `sdk_flow.py` is not written
+> yet — see §10.
 
 **`sub` versus `act`/`cid` is the entire "on behalf of" story.** The access token
 carries the *shopper* as its subject and the *agent* as the actor. The order that
@@ -411,9 +424,10 @@ rather than an Okta org.
 | Intents, approval state machine, guarded transitions, idempotency | done |
 | Step-up: PKCE, `state` binding, `sub` binding, `nonce`, `acr`, `auth_time`, single-use code | done, mock issuer |
 | Scope-probe negative tests | done, both refusals verified |
+| `raw_flow.py` — the two-leg exchange over real HTTP with `private_key_jwt` | done, mock issuer |
+| Exchange-probe negative tests against the token endpoints | done, all four refusals verified |
 | Okta OIDC sign-in against a real org | not started |
 | Terraform for users, groups, app, two authorization servers, claims | not started |
-| `raw_flow.py` — real ID-JAG against Okta | not started |
 | `sdk_flow.py` — `okta-client-python` `CrossAppAccessFlow` adapter | not started |
 | Real step-up against the org, JWKS verifier in `app/security/` | not started |
 | Secures-AI agent registration | not started |
