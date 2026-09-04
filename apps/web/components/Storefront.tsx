@@ -226,7 +226,7 @@ export default function Storefront({
 
       <main className="mx-auto max-w-7xl space-y-8 px-6 py-8">
         <ProductGrid products={products}>
-          {demoMode && <RestockTriggerButton onRestock={restock} />}
+          <RestockTriggerButton onRestock={restock} />
         </ProductGrid>
 
         <AssistantPanel

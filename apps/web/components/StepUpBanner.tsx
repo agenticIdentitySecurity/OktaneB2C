@@ -96,25 +96,61 @@ export default function StepUpBanner({
       <div className="mt-2.5 text-sm">{summary}</div>
 
       {!settled && (
-        <>
-          <p className="mt-2 text-[11px] leading-relaxed text-net-white/50">
-            Back in stock. The assistant cannot spend your money on its own, so it
-            has asked you to approve this purchase and verify it is really you.
-          </p>
-          <a
-            href={resumeUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-3 inline-flex items-center gap-2 rounded-lg bg-okta-blue px-3 py-2 text-xs font-semibold text-net-white hover:bg-okta-blue-light"
-          >
-            <MailCheck className="h-3.5 w-3.5" />
-            Open the notification
-          </a>
-          <div className="mt-2 font-mono text-[10px] text-net-white/30">
-            expires in {approval?.seconds_remaining ?? 900}s · a second factor is
-            required
+        <div className="mt-3">
+          <div className="overflow-hidden rounded-lg border border-okta-blue/25 bg-neutral-bg/70 shadow-inner">
+            <div className="flex items-center gap-2 border-b border-neutral-border/60 bg-primary-light/40 px-3 py-2">
+              <MailCheck className="h-3.5 w-3.5 shrink-0 text-okta-blue-light" />
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-okta-blue-light">
+                New notification
+              </div>
+              <div className="ml-auto text-[10px] text-net-white/30">just now</div>
+            </div>
+            <dl className="space-y-0.5 border-b border-neutral-border/60 px-3 py-2.5 font-mono text-[11px]">
+              <div className="flex gap-2">
+                <dt className="w-14 shrink-0 text-net-white/35">to</dt>
+                <dd className="text-net-white/80">customer@atko.email</dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="w-14 shrink-0 text-net-white/35">from</dt>
+                <dd className="text-net-white/60">
+                  OktaneB2C Notifications &lt;no-reply@oktaneb2c.demo&gt;
+                </dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="w-14 shrink-0 text-net-white/35">subject</dt>
+                <dd className="text-net-white">Approve your purchase</dd>
+              </div>
+            </dl>
+            <div className="px-3 py-3">
+              <p className="text-xs leading-relaxed text-net-white/70">
+                Your shopping assistant is ready to place this order on your
+                behalf:
+              </p>
+              <p className="mt-2 text-sm font-medium text-net-white">{summary}</p>
+              <p className="mt-3 text-[11px] leading-relaxed text-net-white/55">
+                The assistant cannot spend your money on its own. Approve with a
+                second factor to release the purchase.
+              </p>
+              <a
+                href={resumeUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-okta-blue px-4 py-2.5 text-sm font-semibold text-net-white hover:bg-okta-blue-light"
+              >
+                <Fingerprint className="h-4 w-4" />
+                Verify with Okta and approve
+              </a>
+              <div className="mt-2 text-center font-mono text-[10px] text-net-white/25">
+                single-use link · expires in{' '}
+                {approval?.seconds_remaining ?? 900}s
+              </div>
+            </div>
           </div>
-        </>
+          <p className="mt-2 pl-1 text-[10px] italic leading-relaxed text-net-white/30">
+            Simulated inbox for the demo — in production this delivers to a real
+            email provider.
+          </p>
+        </div>
       )}
 
       {state === 'COMPLETED' && approval?.order_id && (
