@@ -24,7 +24,7 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: ANTHROPIC_MODEL
-        value: claude-opus-4-7
+        value: claude-sonnet-4-6
       - key: APPROVAL_TTL_SECONDS
         value: "900"
       - key: STEPUP_FRESHNESS_SECONDS
