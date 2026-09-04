@@ -22,12 +22,12 @@ from .tokens.factory import token_for
 
 log = logging.getLogger("oktane.mcp_client")
 
-# Render's free tier suspends idle containers. When a request lands on a cold
-# service, Render's front proxy responds with 502 while the container spins up
-# — typically 20-30 seconds. Retrying absorbs that so a shopper clicking a
-# button doesn't see a failure that will fix itself in half a minute.
-_TRANSIENT_STATUSES = frozenset({502, 503, 504})
-_MAX_RETRIES = 3
+# Render's free tier is unfriendly in two ways: containers suspend after idle
+# (cold start returns 502 for ~30 s while the container spins up), and the
+# front proxy imposes a burst rate limit that returns 429 during a demo when
+# multiple tool calls fire in quick succession. Retrying absorbs both.
+_TRANSIENT_STATUSES = frozenset({429, 502, 503, 504})
+_MAX_RETRIES = 4
 _BACKOFF_SECONDS = 2.0
 
 
