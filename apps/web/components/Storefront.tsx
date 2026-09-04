@@ -61,6 +61,14 @@ export default function Storefront({
     setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content }]);
   }, []);
 
+  // Fire-and-forget prewarm of the Render free-tier backends. Without this a
+  // cold Simulate-restock click sees a 502 from the MCP server while it spins
+  // up. See mcp_client._request_with_retry — retries absorb the same case for
+  // any request that races the cold start; this just makes it not happen.
+  useEffect(() => {
+    fetch('/api/warm').catch(() => {});
+  }, []);
+
   async function signIn(email: string) {
     const response = await fetch('/api/session', {
       method: 'POST',

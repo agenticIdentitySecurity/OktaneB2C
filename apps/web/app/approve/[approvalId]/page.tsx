@@ -1,9 +1,20 @@
 import Link from 'next/link';
-import { ShieldCheck, Fingerprint, TriangleAlert, ArrowLeft } from 'lucide-react';
+import { ShieldCheck, Fingerprint, TriangleAlert, ArrowLeft, CircleCheck } from 'lucide-react';
 import ApprovalDecision from '@/components/ApprovalDecision';
 import { AGENT_URL, agentJson } from '@/lib/agent';
 import { formatPrice } from '@/lib/format';
-import type { Approval, Intent } from '@/lib/types';
+import type { Approval, Intent, TraceEvent } from '@/lib/types';
+
+/** Human labels for the check names emitted by apps/agent/app/routers/approvals.py. */
+const CHECK_LABELS: Record<string, string> = {
+  pkce: 'PKCE round trip completed',
+  state_bound: 'State parameter bound to this approval, used exactly once',
+  sub_matches_approval: 'ID token subject matches the approval owner',
+  nonce: 'Nonce matches',
+  acr_required: 'acr equals the required value',
+  auth_time_fresh: 'auth_time is fresh (later than the approval, within the window)',
+  resume_code_single_use: 'Single-use resume code marked consumed',
+};
 
 export const dynamic = 'force-dynamic';
 
@@ -37,6 +48,16 @@ export default async function ApprovePage({
   const data = await agentJson<{ approval: Approval; intent: Intent | null }>(
     `/approvals/${encodeURIComponent(approvalId)}`,
   ).catch(() => null);
+
+  // Pull the "Step-up verified" trace event so we can render the seven
+  // checks as a proof-of-security list. Absent when step-up hasn't landed yet.
+  const trace = await agentJson<{ trace: TraceEvent[] }>(
+    `/telemetry/${encodeURIComponent(approvalId)}`,
+  ).catch(() => ({ trace: [] as TraceEvent[] }));
+  const verifiedEvent = trace.trace.find(
+    (e) => e.kind === 'stepup' && e.ok && Array.isArray(e.claims?.checks),
+  );
+  const checks = (verifiedEvent?.claims?.checks as string[] | undefined) ?? null;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-6 py-12">
@@ -121,6 +142,32 @@ export default async function ApprovePage({
                 </div>
               ))}
             </dl>
+
+            {checks && checks.length > 0 && (
+              <section
+                aria-labelledby="stepup-checks"
+                className="mt-5 rounded-xl border border-success-green/25 bg-success-green/5 p-4"
+              >
+                <h2
+                  id="stepup-checks"
+                  className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-success-green"
+                >
+                  Step-up verified — all checks passed
+                </h2>
+                <ul className="space-y-1.5 text-xs leading-relaxed text-net-white/75">
+                  {checks.map((name) => (
+                    <li key={name} className="flex items-start gap-2">
+                      <CircleCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-green" />
+                      <span>{CHECK_LABELS[name] ?? name}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-3 text-[10px] leading-relaxed text-net-white/40">
+                  Getting any one of these wrong turns the whole human-in-the-loop
+                  story into theatre, so each is checked explicitly.
+                </p>
+              </section>
+            )}
 
             <div className="mt-5">
               {decisionToken ? (

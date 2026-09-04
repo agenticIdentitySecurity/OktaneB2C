@@ -1,0 +1,62 @@
+services:
+  # FastAPI agent — mints mock tokens, runs the approval state machine
+  - type: web
+    name: oktane-b2c-agent
+    runtime: python
+    rootDir: apps/agent
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DEMO_MODE
+        value: mock
+      - key: TOKEN_EXCHANGE_IMPL
+        value: mock
+      # Public URL this service is reachable at — embedded in JWT iss claim
+      - key: AGENT_PUBLIC_BASE
+        value: https://oktane-b2c-agent.onrender.com
+      # MCP server URL
+      - key: MCP_URL
+        value: https://oktane-b2c-mcp.onrender.com
+      # Vercel frontend URL — used for CORS allow_origins
+      - key: WEB_BASE
+        value: https://oktane-b2c-web.vercel.app
+      # Optional: set to enable Claude responses (deterministic fallback otherwise)
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-opus-4-7
+      - key: APPROVAL_TTL_SECONDS
+        value: "900"
+      - key: STEPUP_FRESHNESS_SECONDS
+        value: "120"
+      # Only consulted when DEMO_MODE=okta. Left unset while running against
+      # the local mock authorization server (default). Set it (e.g.
+      # dev-12345.okta.com) to verify real Okta ID tokens during step-up.
+      - key: OKTA_DOMAIN
+        sync: false
+      # OIDC client id the agent presents to Okta and expects as the aud on
+      # step-up ID tokens. Overrides the built-in mock default.
+      - key: OKTA_AGENT_CLIENT_ID
+        sync: false
+
+  # Express MCP server — resource server, verifies tokens against mock-as JWKS
+  - type: web
+    name: oktane-b2c-mcp
+    runtime: node
+    rootDir: packages/mcp-server
+    buildCommand: npm install && npm run build && node dist/seed.js
+    startCommand: sh -c 'MCP_PORT=$PORT node dist/server.js'
+    envVars:
+      - key: MCP_REQUIRE_AUTH
+        value: "true"
+      - key: DEMO_MODE
+        value: mock
+      # Issuer URLs must match AGENT_PUBLIC_BASE above + /mock-as/{name}
+      - key: OKTA_CATALOG_ISSUER
+        value: https://oktane-b2c-agent.onrender.com/mock-as/catalog
+      - key: OKTA_ORDERS_ISSUER
+        value: https://oktane-b2c-agent.onrender.com/mock-as/orders
+      - key: OKTA_CATALOG_AUDIENCE
+        value: api://oktane-catalog
+      - key: OKTA_ORDERS_AUDIENCE
+        value: api://oktane-orders
