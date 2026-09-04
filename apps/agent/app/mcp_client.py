@@ -137,7 +137,33 @@ async def call_tool(
             headers={"authorization": f"Bearer {exchange.access_token}"},
         )
 
-    body = response.json()
+    # After retries: if MCP is still returning a non-JSON error page (cold-start
+    # 5xx, gateway 429), surface it as a structured McpError instead of blowing
+    # up on response.json(). The retry helper already absorbs transient statuses
+    # up to _MAX_RETRIES; anything left here is a real failure the caller needs
+    # to see.
+    if response.status_code >= 400:
+        preview = response.text[:200].replace("\n", " ")
+        log.warning(
+            "MCP %s returned %d after retries: %s", tool, response.status_code, preview
+        )
+        raise McpError(
+            tool,
+            -32000,
+            f"MCP unreachable (HTTP {response.status_code})",
+            {"reason": "mcp_unreachable", "detail": preview, "status": response.status_code},
+        )
+
+    try:
+        body = response.json()
+    except ValueError as exc:
+        preview = response.text[:200].replace("\n", " ")
+        raise McpError(
+            tool,
+            -32603,
+            "MCP returned non-JSON body",
+            {"reason": "invalid_response", "detail": preview},
+        ) from exc
 
     if "error" in body:
         err = body["error"]
