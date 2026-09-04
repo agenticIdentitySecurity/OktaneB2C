@@ -50,6 +50,7 @@ export default function Storefront({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [llm, setLlm] = useState('deterministic');
+  const [activeTab, setActiveTab] = useState<'store' | 'chat'>('store');
   const settledRef = useRef(false);
 
   const refreshProducts = useCallback(async () => {
@@ -132,7 +133,8 @@ export default function Storefront({
       setLlm(turn.llm);
       if (turn.trace?.length) {
         setChatTrace((prev) => [...prev, ...turn.trace]);
-        setDrawerOpen(true);
+        // Do NOT auto-open the drawer — the badge on the closed trace button
+        // shows the new event count, and the presenter clicks in on cue.
       }
     } finally {
       setBusy(false);
@@ -167,7 +169,8 @@ export default function Storefront({
       "Good news — it's back in stock. Before I buy anything I need you to approve " +
         'it and confirm it is really you.',
     );
-    setDrawerOpen(true);
+    // Drawer stays closed until the presenter clicks in — the trace button's
+    // badge count still ticks up so the audience sees new events queued.
   }
 
   // Poll the approval the way a CIBA client would, until it settles.
@@ -224,22 +227,86 @@ export default function Storefront({
         onSignOut={signOut}
       />
 
-      <main className="mx-auto max-w-7xl space-y-8 px-6 py-8">
-        <ProductGrid products={products}>
-          <RestockTriggerButton onRestock={restock} />
-        </ProductGrid>
+      <main className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+        {/* Tab bar — Products by default (the storefront), Chat for the
+            assistant + security trace + demo controls. */}
+        <nav
+          aria-label="Sections"
+          className="flex items-center gap-1 border-b border-neutral-border"
+        >
+          <button
+            type="button"
+            onClick={() => setActiveTab('store')}
+            aria-selected={activeTab === 'store'}
+            className={[
+              'relative px-4 py-2.5 text-sm font-medium transition-colors',
+              activeTab === 'store'
+                ? 'text-accent'
+                : 'text-net-white/50 hover:text-net-white/80',
+            ].join(' ')}
+          >
+            Shop
+            {activeTab === 'store' && (
+              <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-accent" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('chat')}
+            aria-selected={activeTab === 'chat'}
+            className={[
+              'relative px-4 py-2.5 text-sm font-medium transition-colors',
+              activeTab === 'chat'
+                ? 'text-accent'
+                : 'text-net-white/50 hover:text-net-white/80',
+            ].join(' ')}
+          >
+            Shopping assistant
+            {chatTrace.length > 0 && activeTab !== 'chat' && (
+              <span className="ml-1.5 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-tech-purple/25 px-1 font-mono text-[9px] font-bold text-tech-purple-light">
+                {chatTrace.length}
+              </span>
+            )}
+            {activeTab === 'chat' && (
+              <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-accent" />
+            )}
+          </button>
+        </nav>
 
-        <AssistantPanel
-          messages={messages}
-          intents={intents}
-          approval={raised ? approval : null}
-          approvalSummary={raised?.summary ?? ''}
-          resumeUrl={raised?.resume_url ?? '#'}
-          onSend={send}
-          busy={busy}
-          signedIn={profile !== null}
-          llm={llm}
-        />
+        {activeTab === 'store' && (
+          <ProductGrid products={products} />
+        )}
+
+        {activeTab === 'chat' && (
+          <div className="space-y-4">
+            {/* Demo controls row — the Simulate Restock button lives with
+                the assistant, not on the storefront, so the shopping surface
+                stays clean. */}
+            <div className="flex items-center justify-between rounded-xl border border-neutral-border bg-primary/40 px-4 py-2.5">
+              <div className="flex items-center gap-2 text-[11px] text-net-white/50">
+                <span className="font-semibold uppercase tracking-[0.14em] text-net-white/40">
+                  Demo controls
+                </span>
+                <span className="hidden sm:inline">
+                  · scripted event to trigger the HITL approval
+                </span>
+              </div>
+              <RestockTriggerButton onRestock={restock} />
+            </div>
+
+            <AssistantPanel
+              messages={messages}
+              intents={intents}
+              approval={raised ? approval : null}
+              approvalSummary={raised?.summary ?? ''}
+              resumeUrl={raised?.resume_url ?? '#'}
+              onSend={send}
+              busy={busy}
+              signedIn={profile !== null}
+              llm={llm}
+            />
+          </div>
+        )}
       </main>
 
       <TelemetryDrawer
