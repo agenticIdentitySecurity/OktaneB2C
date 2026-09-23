@@ -116,7 +116,9 @@ export default function StepUpBanner({
             <dl className="space-y-0.5 border-b border-neutral-border/60 px-3 py-2.5 font-mono text-[11px]">
               <div className="flex gap-2">
                 <dt className="w-14 shrink-0 text-net-white/35">to</dt>
-                <dd className="text-net-white/80">{notification?.to ?? 'customer@atko.email'}</dd>
+                <dd className="text-net-white/80">
+                  {notification?.to ?? 'billy.buyer@atko.email'}
+                </dd>
               </div>
               <div className="flex gap-2">
                 <dt className="w-14 shrink-0 text-net-white/35">from</dt>
